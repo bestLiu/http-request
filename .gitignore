@@ -5,3 +5,7 @@ target
 # IntelliJ IDEA
 .idea
 *.iml
+
+# Zed Code Editor
+.zedstate
+tags

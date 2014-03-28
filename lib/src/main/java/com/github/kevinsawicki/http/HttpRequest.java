@@ -64,9 +64,13 @@ import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
 import java.security.AccessController;
 import java.security.GeneralSecurityException;
+import java.security.KeyStore;
 import java.security.PrivilegedAction;
 import java.security.SecureRandom;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -84,6 +88,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 
 /**
@@ -253,8 +258,12 @@ public class HttpRequest {
   private static final String CRLF = "\r\n";
 
   private static final String[] EMPTY_STRINGS = new String[0];
+  
+  private static SSLSocketFactory PINNED_FACTORY;
 
   private static SSLSocketFactory TRUSTED_FACTORY;
+  
+  private static ArrayList<Certificate> PINNED_CERTS;
 
   private static HostnameVerifier TRUSTED_VERIFIER;
 
@@ -263,6 +272,16 @@ public class HttpRequest {
       return charset;
     else
       return CHARSET_UTF8;
+  }
+  
+  private static SSLSocketFactory getPinnedFactory()
+      throws HttpRequestException {
+    if (PINNED_FACTORY != null) {
+        return PINNED_FACTORY;
+    } else {
+        IOException e = new IOException("You must add at least 1 certificate in order to pin to certificates");
+        throw new HttpRequestException(e);
+    }
   }
 
   private static SSLSocketFactory getTrustedFactory()
@@ -377,6 +396,58 @@ public class HttpRequest {
       CONNECTION_FACTORY = ConnectionFactory.DEFAULT;
     else
       CONNECTION_FACTORY = connectionFactory;
+  }
+  
+  
+  /**
+  * Add a certificate to test against when using ssl pinning.
+  *
+  * @param ca
+  *          The Certificate to add
+  * @throws GeneralSecurityException
+  * @throws IOException
+  */
+  public static void addCert(Certificate ca) throws GeneralSecurityException, IOException  {
+      if (PINNED_CERTS == null) {
+          PINNED_CERTS = new ArrayList<Certificate>();
+      }
+      PINNED_CERTS.add(ca);
+      String keyStoreType = KeyStore.getDefaultType();
+      KeyStore keyStore = KeyStore.getInstance(keyStoreType);
+      keyStore.load(null, null);
+      
+      for (int i = 0; i < PINNED_CERTS.size(); i++) {
+          keyStore.setCertificateEntry("CA" + i, ca);
+      }
+      
+      // Create a TrustManager that trusts the CAs in our KeyStore
+      String tmfAlgorithm = TrustManagerFactory.getDefaultAlgorithm();
+      TrustManagerFactory tmf = TrustManagerFactory.getInstance(tmfAlgorithm);
+      tmf.init(keyStore);
+      
+      // Create an SSLContext that uses our TrustManager
+      SSLContext sslContext = SSLContext.getInstance("TLS");
+      sslContext.init(null, tmf.getTrustManagers(), null);
+      PINNED_FACTORY = sslContext.getSocketFactory();
+  }
+  
+  /**
+  * Add a certificate to test against when using ssl pinning.
+  *
+  * @param in
+  *          An InputStream to read a certificate from
+  * @throws GeneralSecurityException
+  * @throws IOException
+  */
+  public static void addCert(InputStream in) throws GeneralSecurityException, IOException {
+      CertificateFactory cf = CertificateFactory.getInstance("X.509");
+      Certificate ca;
+      try {
+          ca = cf.generateCertificate(in);
+          addCert(ca);
+      } finally {
+          in.close();
+      }
   }
 
   /**
@@ -3136,7 +3207,26 @@ public class HttpRequest {
         form(entry, charset);
     return this;
   }
-
+  
+  /**
+   * Configure HTTPS connection to trust only certain certificates
+   * <p>
+   * This method throws an exception if the current request is not a HTTPS request
+   *
+   * @return this request
+   * @throws HttpRequestException
+   */
+  public HttpRequest pinToCerts() throws HttpRequestException {
+    final HttpURLConnection connection = getConnection();
+    if (connection instanceof HttpsURLConnection) {
+        ((HttpsURLConnection) connection).setSSLSocketFactory(getPinnedFactory());
+    } else {
+        IOException e = new IOException("You must use a https url to use ssl pinning");
+        throw new HttpRequestException(e);
+    }
+    return this;
+  }
+  
   /**
    * Configure HTTPS connection to trust all certificates
    * <p>
