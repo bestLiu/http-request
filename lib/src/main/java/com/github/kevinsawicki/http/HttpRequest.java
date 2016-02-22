@@ -3291,13 +3291,20 @@ public class HttpRequest {
    *
    * @return this request
    */
-  public HttpRequest trustAllHosts() {
+  public HttpRequest trustAllHosts(boolean enable) {
     final HttpURLConnection connection = getConnection();
-    if (connection instanceof HttpsURLConnection)
-      ((HttpsURLConnection) connection)
-          .setHostnameVerifier(getTrustedVerifier());
+    if (connection instanceof HttpsURLConnection) {
+      if (enable) {
+        ((HttpsURLConnection) connection)
+            .setHostnameVerifier(getTrustedVerifier());
+      } else {
+        ((HttpsURLConnection) connection)
+                .setHostnameVerifier(HttpsURLConnection.getDefaultHostnameVerifier());
+      }
+    }
     return this;
   }
+
 
   /**
    * Get the {@link URL} of this request's connection
